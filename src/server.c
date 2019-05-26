@@ -1000,10 +1000,12 @@ void clientsCron(void) {
 void databasesCron(void) {
     /* Expire keys by random sampling. Not required for slaves
      * as master will synthesize DELs for us. */
-    if (server.active_expire_enabled && server.masterhost == NULL) {
-        activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
-    } else if (server.masterhost != NULL) {
-        expireSlaveKeys();
+    if (server.active_expire_enabled) {
+        if (server.masterhost == NULL) {
+            activeExpireCycle(ACTIVE_EXPIRE_CYCLE_SLOW);
+        } else {
+            expireSlaveKeys();
+        }
     }
 
     /* Defrag keys gradually. */
@@ -2541,6 +2543,8 @@ void call(client *c, int flags) {
  * other operations can be performed by the caller. Otherwise
  * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
 int processCommand(client *c) {
+    moduleCallCommandFilters(c);
+
     /* The QUIT command is handled separately. Normal command procs will
      * go through checking for replication and QUIT will cause trouble
      * when FORCE_REPLICATION is enabled and would be implemented in
@@ -3803,6 +3807,7 @@ static void sigShutdownHandler(int sig) {
         rdbRemoveTempFile(getpid());
         exit(1); /* Exit with an error since this was not a clean shutdown. */
     } else if (server.loading) {
+        serverLogFromHandler(LL_WARNING, "Received shutdown signal during loading, exiting now.");
         exit(0);
     }
 
@@ -4018,8 +4023,6 @@ int main(int argc, char **argv) {
             return sha1Test(argc, argv);
         } else if (!strcasecmp(argv[2], "util")) {
             return utilTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "sds")) {
-            return sdsTest(argc, argv);
         } else if (!strcasecmp(argv[2], "endianconv")) {
             return endianconvTest(argc, argv);
         } else if (!strcasecmp(argv[2], "crc64")) {

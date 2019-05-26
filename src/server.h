@@ -551,16 +551,18 @@ typedef struct RedisModuleIO {
     int ver;            /* Module serialization version: 1 (old),
                          * 2 (current version with opcodes annotation). */
     struct RedisModuleCtx *ctx; /* Optional context, see RM_GetContextFromIO()*/
+    struct redisObject *key;    /* Optional name of key processed */
 } RedisModuleIO;
 
 /* Macro to initialize an IO context. Note that the 'ver' field is populated
  * inside rdb.c according to the version of the value to load. */
-#define moduleInitIOContext(iovar,mtype,rioptr) do { \
+#define moduleInitIOContext(iovar,mtype,rioptr,keyptr) do { \
     iovar.rio = rioptr; \
     iovar.type = mtype; \
     iovar.bytes = 0; \
     iovar.error = 0; \
     iovar.ver = 0; \
+    iovar.key = keyptr; \
     iovar.ctx = NULL; \
 } while(0);
 
@@ -1063,6 +1065,7 @@ struct redisServer {
     off_t aof_rewrite_min_size;     /* the AOF file is at least N bytes. */
     off_t aof_rewrite_base_size;    /* AOF size on latest startup or rewrite. */
     off_t aof_current_size;         /* AOF current size. */
+    off_t aof_fsync_offset;         /* AOF offset which is already synced to disk. */
     int aof_rewrite_scheduled;      /* Rewrite once BGSAVE terminates. */
     pid_t aof_child_pid;            /* PID if rewriting process */
     list *aof_rewrite_buf_blocks;   /* Hold changes during an AOF rewrite. */
@@ -1407,7 +1410,7 @@ size_t moduleCount(void);
 void moduleAcquireGIL(void);
 void moduleReleaseGIL(void);
 void moduleNotifyKeyspaceEvent(int type, const char *event, robj *key, int dbid);
-
+void moduleCallCommandFilters(client *c);
 
 /* Utils */
 long long ustime(void);
@@ -1435,6 +1438,7 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask);
 void acceptUnixHandler(aeEventLoop *el, int fd, void *privdata, int mask);
 void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask);
 void addReplyString(client *c, const char *s, size_t len);
+void AddReplyFromClient(client *c, client *src);
 void addReplyBulk(client *c, robj *obj);
 void addReplyBulkCString(client *c, const char *s);
 void addReplyBulkCBuffer(client *c, const void *p, size_t len);

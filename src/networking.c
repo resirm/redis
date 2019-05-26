@@ -29,6 +29,7 @@
 
 #include "server.h"
 #include "atomicvar.h"
+#include <sys/socket.h>
 #include <sys/uio.h>
 #include <math.h>
 #include <ctype.h>
@@ -628,6 +629,19 @@ void addReplySubcommandSyntaxError(client *c) {
     sdsfree(cmd);
 }
 
+/* Append 'src' client output buffers into 'dst' client output buffers. 
+ * This function clears the output buffers of 'src' */
+void AddReplyFromClient(client *dst, client *src) {
+    if (prepareClientToWrite(dst) != C_OK)
+        return;
+    addReplyString(dst,src->buf, src->bufpos);
+    if (listLength(src->reply))
+        listJoin(dst->reply,src->reply);
+    dst->reply_bytes += src->reply_bytes;
+    src->reply_bytes = 0;
+    src->bufpos = 0;
+}
+
 /* Copy 'src' client output buffers into 'dst' client output buffers.
  * The function takes care of freeing the old output buffers of the
  * destination client. */
@@ -793,6 +807,16 @@ void unlinkClient(client *c) {
             raxRemove(server.clients_index,(unsigned char*)&id,sizeof(id),NULL);
             listDelNode(server.clients,c->client_list_node);
             c->client_list_node = NULL;
+        }
+
+        /* In the case of diskless replication the fork is writing to the
+         * sockets and just closing the fd isn't enough, if we don't also
+         * shutdown the socket the fork will continue to write to the slave
+         * and the salve will only find out that it was disconnected when
+         * it will finish reading the rdb. */
+        if ((c->flags & CLIENT_SLAVE) &&
+            (c->replstate == SLAVE_STATE_WAIT_BGSAVE_END)) {
+            shutdown(c->fd, SHUT_RDWR);
         }
 
         /* Unregister async I/O handlers and close the socket. */
@@ -1997,15 +2021,8 @@ void rewriteClientCommandArgument(client *c, int i, robj *newval) {
     }
 }
 
-/* This function returns the number of bytes that Redis is virtually
+/* This function returns the number of bytes that Redis is
  * using to store the reply still not read by the client.
- * It is "virtual" since the reply output list may contain objects that
- * are shared and are not really using additional memory.
- *
- * The function returns the total sum of the length of all the objects
- * stored in the output list, plus the memory used to allocate every
- * list node. The static reply buffer is not taken into account since it
- * is allocated anyway.
  *
  * Note: this function is very fast so can be called as many time as
  * the caller wishes. The main usage of this function currently is
